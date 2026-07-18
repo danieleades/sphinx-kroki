@@ -10,6 +10,7 @@ import pytest
 import requests
 import sphinx
 from sphinx.application import Sphinx
+from sphinx.testing.util import SphinxTestApp
 
 from sphinx_kroki import kroki as kroki_module
 
@@ -22,8 +23,9 @@ def get_content(app: Sphinx) -> str:
 
 
 @pytest.mark.sphinx("html", testroot="kroki", confoverrides={"master_doc": "index"})
-def test_kroki_html(app: Sphinx) -> None:
+def test_kroki_html(app: SphinxTestApp) -> None:
     content = get_content(app)
+    assert app.warning.getvalue() == ""
     html = (
         r'figure[^>]*?(?:kroki kroki-plantuml align-default)?" .*?>\s*'
         r'<img alt="bar -&gt; baz" class="kroki kroki-plantuml" .+?/>.*?'
@@ -55,6 +57,30 @@ def test_kroki_html(app: Sphinx) -> None:
     else:
         html = r'<img.*?class="kroki kroki-ditaa align-right".*?/>'
     assert re.search(html, content, re.DOTALL)
+
+
+@pytest.mark.sphinx(
+    "html", testroot="kroki-warnings", confoverrides={"master_doc": "index"}
+)
+def test_kroki_invalid_directives_warn_and_suppress_output(app: SphinxTestApp) -> None:
+    content = get_content(app)
+    warnings = app.warning.getvalue()
+
+    expected = (
+        "Kroki directive cannot have both filename option and a filename argument",
+        "Kroki directive cannot have both type option and a type argument",
+        "Kroki directive cannot have both format option and a format argument",
+        "Kroki directive cannot have both content and a filename argument",
+        "Kroki directive has to define diagram type.",
+        "Ignoring kroki directive without content",
+        "Kroki directive options must be a YAML mapping",
+        "not found or reading it failed",
+    )
+    for message in expected:
+        assert message in warnings
+    assert warnings.count("WARNING") == len(expected)
+    assert "index.rst:4: " in warnings
+    assert "<img" not in content
 
 
 def test_render_kroki_cleans_up_partial_files(
