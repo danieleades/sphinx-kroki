@@ -116,35 +116,24 @@ class Kroki(SphinxDirective):
         source = "\n".join(self.content)
         filename, diagram_type, output_format = self._parse_arguments()
 
-        filename, warning = self._resolve_filename(filename)
-        if warning is None:
-            source, warning = self._resolve_source(source, filename)
-        if warning is not None:
-            return [warning]
-
+        filename = self._resolve_filename(filename)
+        source = self._resolve_source(source, filename)
         if not source.strip():
-            return [
-                self._warning(
+            raise self.warning(
+                __(
                     "Ignoring kroki directive without content. It is necessary "
                     "to specify filename argument/option or content"
                 )
-            ]
+            )
+        diagram_type = self._resolve_diagram_type(diagram_type, filename)
+        output_format = self._resolve_output_format(output_format)
+        diagram_options = self._load_diagram_options()
 
-        diagram_type, warning = self._resolve_diagram_type(diagram_type, filename)
-        if warning is not None:
-            return [warning]
-
-        output_format, warning = self._resolve_output_format(output_format)
-        if warning is not None:
-            return [warning]
-
-        diagram_options, warning = self._load_diagram_options()
-        if warning is not None:
-            return [warning]
-
-        diagram_type = cast("str", diagram_type)
-        node = self._create_node(diagram_type, source, output_format, diagram_options)
-        return self._wrap_node(node, diagram_type)
+        classes = ["kroki", f"kroki-{diagram_type}"]
+        node = self._create_node(
+            diagram_type, source, output_format, diagram_options, classes
+        )
+        return self._wrap_node(node, classes)
 
     def _parse_arguments(self) -> tuple[str | None, str | None, str | None]:
         filename: str | None = None
@@ -161,104 +150,98 @@ class Kroki(SphinxDirective):
 
         return filename, diagram_type, output_format
 
-    def _resolve_filename(self, filename: str | None) -> tuple[str | None, Node | None]:
-        if "filename" in self.options:
-            if filename is not None:
-                return None, self._warning(
-                    "Kroki directive cannot have both filename option and a "
-                    "filename argument"
-                )
-            filename = cast("str", self.options["filename"])
-        return filename, None
+    def _check_option_argument_conflict(
+        self, name: str, argument: object | None
+    ) -> None:
+        if name in self.options and argument is not None:
+            raise self.warning(
+                __("Kroki directive cannot have both %s option and a %s argument")
+                % (name, name)
+            )
 
-    def _resolve_source(
-        self, source: str, filename: str | None
-    ) -> tuple[str, Node | None]:
+    def _resolve_filename(self, filename: str | None) -> str | None:
+        self._check_option_argument_conflict("filename", filename)
+        if "filename" in self.options:
+            return cast("str", self.options["filename"])
+        return filename
+
+    def _resolve_source(self, source: str, filename: str | None) -> str:
         if source.strip() and filename is not None:
-            return source, self._warning(
-                "Kroki directive cannot have both content and a filename argument"
+            raise self.warning(
+                __("Kroki directive cannot have both content and a filename argument")
             )
 
         if filename is None:
-            return source, None
+            return source
 
         argument = search_image_for_language(filename, self.env)
         rel_filename, resolved_filename = self.env.relfn2path(argument)
         self.env.note_dependency(rel_filename)
         try:
-            return Path(resolved_filename).read_text(encoding="utf-8"), None
-        except OSError:
-            return source, self._warning(
-                "External kroki file %r not found or reading it failed",
-                resolved_filename,
-            )
+            return Path(resolved_filename).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise self.warning(
+                __("External kroki file %r not found or reading it failed")
+                % resolved_filename
+            ) from exc
 
     def _resolve_diagram_type(
         self, diagram_type: str | None, filename: str | None
-    ) -> tuple[str | None, Node | None]:
+    ) -> str:
+        self._check_option_argument_conflict("type", diagram_type)
         if "type" in self.options:
-            if diagram_type is not None:
-                return None, self._warning(
-                    "Kroki directive cannot have both type option and a type argument"
-                )
-            diagram_type = types[cast("str", self.options["type"])]
-        elif diagram_type is None and filename is not None:
+            return types[cast("str", self.options["type"])]
+        if diagram_type is not None:
+            return diagram_type
+        if filename is not None:
             suffix = Path(filename).suffix.lstrip(".")
-            diagram_type = extension_type_map.get(suffix, types.get(suffix))
+            resolved = extension_type_map.get(suffix, types.get(suffix))
+            if resolved is not None:
+                return resolved
+        raise self.warning(__("Kroki directive has to define diagram type."))
 
-        if diagram_type is None:
-            return None, self._warning("Kroki directive has to define diagram type.")
-
-        return diagram_type, None
-
-    def _resolve_output_format(
-        self, output_format: str | None
-    ) -> tuple[str | None, Node | None]:
+    def _resolve_output_format(self, output_format: str | None) -> str:
+        self._check_option_argument_conflict("format", output_format)
         if "format" in self.options:
-            if output_format is not None:
-                return None, self._warning(
-                    "Kroki directive cannot have both format option and a "
-                    "format argument"
-                )
-            output_format = cast("str", self.options["format"])
+            return cast("str", self.options["format"])
+        if output_format is not None:
+            return output_format
+        return cast("str", self.config.kroki_output_format)
 
-        return output_format, None
-
-    def _load_diagram_options(self) -> tuple[dict[str, object] | None, Node | None]:
+    def _load_diagram_options(self) -> dict[str, object] | None:
         if "options" not in self.options:
-            return None, None
+            return None
 
         loaded = yaml.safe_load(cast("str", self.options["options"]))
         if loaded is None:
-            return {}, None
+            return {}
         if not isinstance(loaded, dict):
-            return None, self._warning("Kroki directive options must be a YAML mapping")
-        return cast("dict[str, object]", loaded), None
+            raise self.warning(__("Kroki directive options must be a YAML mapping"))
+        return cast("dict[str, object]", loaded)
 
     def _create_node(
         self,
         diagram_type: str,
         source: str,
-        output_format: str | None,
+        output_format: str,
         diagram_options: dict[str, object] | None,
+        classes: list[str],
     ) -> KrokiNode:
         node = KrokiNode()
         node["type"] = diagram_type
-        if output_format is not None:
-            node["format"] = output_format
+        node["format"] = output_format
         node["source"] = source
 
         if diagram_options is not None:
             node["options"] = diagram_options
 
-        classes = ["kroki", f"kroki-{diagram_type}"]
         node["classes"] = classes + self.options.get("class", [])
         if "align" in self.options:
             node["align"] = self.options["align"]
 
         return node
 
-    def _wrap_node(self, node: KrokiNode, diagram_type: str) -> list[Node]:
+    def _wrap_node(self, node: KrokiNode, classes: list[str]) -> list[Node]:
         if "caption" not in self.options:
             self.add_name(node)
             return [node]
@@ -273,15 +256,9 @@ class Kroki(SphinxDirective):
         caption_node.extend(messages)
         set_source_info(self, caption_node)
         figure += caption_node
-        figure["classes"] = ["kroki", f"kroki-{diagram_type}"]
+        figure["classes"] = list(classes)
         self.add_name(figure)
         return [figure]
-
-    def _warning(self, message: str, *args: object) -> Node:
-        translated = __(message)
-        if args:
-            translated = translated % args
-        return self.state.document.reporter.warning(translated, line=self.lineno)
 
 
 def render_kroki(

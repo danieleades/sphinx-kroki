@@ -42,6 +42,7 @@ dev = [
 
 [tool.mypy]
 files = ["src", "tests"]
+exclude = ["tests/fixtures/"]
 
 [tool.ruff]
 lint.select = [

@@ -42,11 +42,8 @@ class KrokiToImageTransform(SphinxTransform):
 
             node.replace_self(img)
 
-    def _output_format(self, node: KrokiNode) -> str:
-        return cast("str", node.get("format", self._builder.config.kroki_output_format))
-
     def _render(self, node: KrokiNode, prefix: str = "kroki") -> Path:
-        output_format = self._output_format(node)
+        output_format = cast("str", node["format"])
         diagram_type = cast("str", node["type"])
         diagram_source = cast("str", node["source"])
 
