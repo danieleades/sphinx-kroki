@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sphinx-kroki"
-version = "0.1.0"
+version = "0.1.1"
 description = "Kroki integration into sphinx"
 readme = "README.md"
 requires-python = ">=3.9"
